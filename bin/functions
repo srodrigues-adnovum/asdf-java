@@ -87,6 +87,13 @@ case "${KERNEL_NAME}" in
            STAT_OPTS=('-c' '%Z')
            TEMP_DIR=$(mktemp -dp /tmp asdf-java.XXXXXXXX)
            ;;
+    MINGW64*)
+           OS="windows"
+           SHA256SUM="sha256sum"
+           STAT="stat"
+           STAT_OPTS=('-c' '%Z')
+           TEMP_DIR=$(mktemp -dp /tmp asdf-java.XXXXXXXX)
+           ;;               
     *) echo "Unknown operating system: ${KERNEL_NAME}"
        exit 1
 esac
@@ -115,17 +122,47 @@ function retrieve-release-data() {
     local cache_file="${CACHE_DIR}/releases-${OS}-${ARCHITECTURE}.tsv"
     # shellcheck disable=SC2046
     if [[ ! -r "${cache_file}" ]] || (( $($STAT "${STAT_OPTS[@]}" "${cache_file}") <= $(date +%s) - 3600 )) ; then
-        local base_url="https://raw.githubusercontent.com/halcyon/asdf-java/master/data/jdk-${OS}-${ARCHITECTURE}"
-        local url
-        case "$(get_asdf_config_value "java_release_type")" in
-            ga) url="$base_url-ga.tsv" ;;
-            ea) url="$base_url-ea.tsv" ;;
-            all) url="$base_url-all.tsv" ;;
-            *) url="$base_url-ga.tsv" ;;
-        esac
+        if command -v jq >/dev/null 2>&1; then
+            # jq is installed - get latest versions
+            case "$(get_asdf_config_value "java_release_type")" in
+                ga) update-release-tsv "ga" "${cache_file}";;
+                ea) update-release-tsv "ea" "${cache_file}";;
+                all) update-release-tsv "ga ea" "${cache_file}";;
+                *) update-release-tsv "ga" "${cache_file}";;
+            esac
+        else
+            # jq is not installed
+            local tsv
+            case "$(get_asdf_config_value "java_release_type")" in
+                ga)  tsv="jdk-${OS}-${ARCHITECTURE}-ga.tsv" ;;
+                ea)  tsv="jdk-${OS}-${ARCHITECTURE}-ea.tsv" ;;
+                all) tsv="jdk-${OS}-${ARCHITECTURE}-all.tsv" ;;
+                *)   tsv="jdk-${OS}-${ARCHITECTURE}-ga.tsv" ;;
+            esac
 
-        curl -sS --compressed -L "${url}" -o "${cache_file}"
+            # attempt to download from halcyon repo
+            local url="https://raw.githubusercontent.com/srodrigues-adnovum/asdf-java/master/data/${tsv}"
+            if ! curl --compressed -fsSL -o "${cache_file}" "${url}"; then
+            	# invalid file, copy from local data dir
+            	cp "${ASDF_DIR}/plugins/java/data/${tsv}" "${cache_file}"
+            fi
+        fi
     fi
+}
+
+function update-release-tsv(){
+    RELEASE_QUERY='.[]
+        | select(.file_type | IN("tar.gz", "zip"))
+        | .["features"] = (.features | map(select(IN("musl", "javafx", "lite", "large_heap"))))
+        | [([.vendor, if (.image_type == "jre") then .image_type else empty end, if (.jvm_impl == "openj9") then .jvm_impl else empty end, if ((.features | length) == 0) then empty else (.features | join("-")) end, .version] | join("-")), .filename, .url, .sha256]
+        | @tsv'
+    local all_data=""
+    for RELEASE_TYPE in $1
+	do
+        all_data+=$(curl "https://joschi.github.io/java-metadata/metadata/${RELEASE_TYPE}/${OS}/${ARCHITECTURE}.json" | jq -r "${RELEASE_QUERY}")
+        all_data+=$'\n'
+	done
+    echo "${all_data}" | sort -V | sed -e 's/\r$//' -e '/^$/d' > "${2}"
 }
 
 function list-all() {

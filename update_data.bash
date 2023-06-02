@@ -3,7 +3,7 @@ set -e
 set -Euo pipefail
 
 # See https://joschi.github.io/java-metadata/ for supported values
-LIST_OS="linux macosx"
+LIST_OS="linux macosx windows"
 LIST_ARCH="x86_64 aarch64 arm32-vfp-hflt"
 LIST_RELEASE_TYPE="ga ea"
 
@@ -58,5 +58,6 @@ RELEASE_QUERY='.[]
 for FILE in "${DATA_DIR}"/*.json
 do
 	TSV_FILE="$(basename "${FILE}" .json).tsv"
-	jq -r "${RELEASE_QUERY}" "${FILE}" | sort -V > "${DATA_DIR}/${TSV_FILE}"
+	jq -r "${RELEASE_QUERY}" "${FILE}" | sort -V | sed 's/\r$//' > "${DATA_DIR}/${TSV_FILE}"
+	rm "${FILE}"
 done
